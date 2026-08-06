@@ -7,7 +7,19 @@ const balanceDisplay = document.getElementById('balanceDisplay');
 
 let signer, userAddress;
 
-const ROUTER_ADDRESS = "0x2626664c2603336e57b271c530b26c623840c639";
+// Base Ağı Kontrat Adresleri
+const WETH_ADDRESS = "0x4200000000000000000000000000000000000006";
+const USDC_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+const ROUTER_ADDRESS = "0x2626664c2603336e57b271c530b26c623840c639"; // Uniswap V3 SwapRouter02
+
+const WETH_ABI = [
+    "function deposit() public payable",
+    "function approve(address spender, uint256 amount) public returns (bool)"
+];
+
+const ROUTER_ABI = [
+    "function exactInputSingle((address tokenIn, address tokenOut, uint24 fee, address recipient, uint256 deadline, uint256 amountIn, uint256 amountOutMinimum, uint160 sqrtPriceLimitX96) params) external payable returns (uint256 amountOut)"
+];
 
 const BASE_CHAIN = {
     chainId: '0x2105', 
@@ -70,20 +82,40 @@ swapBtn.addEventListener('click', async () => {
 
     try {
         await ensureBaseNetwork();
-        statusText.innerText = "Cüzdandan onay bekleniyor...";
-
         const amountWei = ethers.utils.parseEther(amountVal);
 
-        const tx = await signer.sendTransaction({
-            to: ROUTER_ADDRESS,
-            value: amountWei
-        });
+        // 1. Adım: ETH'yi WETH'e çevir (Wrap)
+        statusText.innerText = "1/2: ETH WETH'e dönüştürülüyor...";
+        const wethContract = new ethers.Contract(WETH_ADDRESS, WETH_ABI, signer);
+        const depositTx = await wethContract.deposit({ value: amountWei });
+        await depositTx.wait();
 
-        statusText.innerText = "İşlem gönderildi, onaylanıyor...";
-        await tx.wait();
+        // 2. Adım: Router'a harcama izni ver (Approve)
+        statusText.innerText = "2/3: Router izni onaylanıyor...";
+        const approveTx = await wethContract.approve(ROUTER_ADDRESS, amountWei);
+        await approveTx.wait();
 
-        statusText.innerText = "🎉 Başarılı! Swap gerçekleşti.";
+        // 3. Adım: Uniswap V3 üzerinden gerçek Swap işlemi
+        statusText.innerText = "3/3: Swap gerçekleştiriliyor...";
+        const routerContract = new ethers.Contract(ROUTER_ADDRESS, ROUTER_ABI, signer);
+        
+        const params = {
+            tokenIn: WETH_ADDRESS,
+            tokenOut: USDC_ADDRESS,
+            fee: 3000, // %0.3 havuz oranı
+            recipient: userAddress,
+            deadline: Math.floor(Date.now() / 1000) + 600,
+            amountIn: amountWei,
+            amountOutMinimum: 0,
+            sqrtPriceLimitX96: 0
+        };
+
+        const swapTx = await routerContract.exactInputSingle(params);
+        await swapTx.wait();
+
+        statusText.innerText = "🎉 Başarılı! Gerçek Swap tamamlandı.";
     } catch (err) {
         statusText.innerText = "Hata: " + (err.reason || err.message || "İşlem iptal edildi.");
+        console.error(err);
     }
 });
